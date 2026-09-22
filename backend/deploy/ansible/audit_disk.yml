@@ -1,0 +1,81 @@
+---
+# Read-only disk audit playbook for DiskAdvisor.
+#
+# Runs as an AAP Controller job template. app/services/ssh_audit.py launches
+# it via POST /api/controller/v2/job_templates/{id}/launch/ with `limit` set
+# to the single target host and `target_mount_point` passed as extra_vars,
+# so `hosts: all` below only ever matches that one host at run time --
+# Controller's inventory/credentials/RBAC govern how it's actually reached.
+# Never writes anything on the target host; only gathers df/du/logrotate
+# facts so the scoring engine can decide whether the request is justified
+# or can be solved by cleanup. Results are published via `set_stats` so
+# Controller surfaces them as the job's `artifacts` (read back over the API,
+# no shared filesystem between DiskAdvisor and Controller required).
+
+- name: DiskAdvisor - read-only disk audit
+  hosts: all
+  gather_facts: true
+  become: false
+  vars:
+    du_top_n: 15
+
+  tasks:
+    - name: Disk kullanımını al (df)
+      ansible.builtin.command: "df -B1 {{ target_mount_point }}"
+      register: df_output
+      changed_when: false
+
+    - name: En büyük dizinleri bul (du)
+      ansible.builtin.shell: >
+        du -x -B1 --max-depth=3 {{ target_mount_point }} 2>/dev/null
+        | sort -rn | head -n {{ du_top_n }}
+      register: du_output
+      changed_when: false
+      failed_when: false
+
+    - name: Büyüyen/eski log dosyalarını bul (7 günden eski, sıkıştırılmamış)
+      ansible.builtin.shell: >
+        find {{ target_mount_point }} -type f -name "*.log" -mtime +7
+        ! -name "*.gz" -printf "%p %s\n" 2>/dev/null | head -n 50
+      register: growing_files_output
+      changed_when: false
+      failed_when: false
+
+    - name: logrotate config dosyalarını listele
+      ansible.builtin.find:
+        paths: /etc/logrotate.d
+        patterns: "*"
+      register: logrotate_files
+
+    - name: logrotate.conf içeriğini oku
+      ansible.builtin.slurp:
+        src: /etc/logrotate.conf
+      register: logrotate_conf
+      failed_when: false
+
+    - name: Reclaimable alanı hesapla (rotate edilmemiş eski loglar toplamı)
+      ansible.builtin.set_fact:
+        reclaimable_bytes: >-
+          {{ growing_files_output.stdout_lines
+             | map('regex_replace', '^.* (\d+)$', '\1')
+             | map('int') | sum }}
+        has_logrotate: "{{ (logrotate_files.matched | default(0)) > 0 }}"
+
+    - name: Bulguları hesapla
+      ansible.builtin.set_fact:
+        top_dirs: "{{ du_output.stdout_lines | default([]) }}"
+        growing_files: "{{ growing_files_output.stdout_lines | default([]) }}"
+        logrotate_findings:
+          has_logrotate: "{{ has_logrotate }}"
+          reclaimable_bytes: "{{ reclaimable_bytes | default(0) }}"
+          config_files: "{{ logrotate_files.files | map(attribute='path') | list }}"
+
+    - name: Bulguları Controller job artifacts'ine yayınla (set_stats)
+      # Controller GET /api/controller/v2/jobs/{id}/ çağrısında bu değerleri
+      # `artifacts` alanında döner; ssh_audit.py bunu doğrudan okur.
+      ansible.builtin.set_stats:
+        data:
+          top_dirs: "{{ top_dirs }}"
+          growing_files: "{{ growing_files }}"
+          logrotate_findings: "{{ logrotate_findings }}"
+        per_host: false

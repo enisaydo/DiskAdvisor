@@ -1,0 +1,10 @@
+[Unit]
+Description=Run DiskAdvisor Dynatrace metrics collector hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

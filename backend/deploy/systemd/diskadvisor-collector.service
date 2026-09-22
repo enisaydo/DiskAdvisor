@@ -1,0 +1,14 @@
+[Unit]
+Description=DiskAdvisor Dynatrace metrics collector (oneshot)
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User=diskadvisor
+Group=diskadvisor
+WorkingDirectory=/opt/diskadvisor/backend
+EnvironmentFile=-/etc/diskadvisor/diskadvisor.env
+ExecStart=/opt/diskadvisor/backend/.venv/bin/python -m app.collector.collect_metrics
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true

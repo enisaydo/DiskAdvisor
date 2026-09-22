@@ -1,0 +1,21 @@
+[Unit]
+Description=DiskAdvisor API (FastAPI/uvicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=diskadvisor
+Group=diskadvisor
+WorkingDirectory=/opt/diskadvisor/backend
+EnvironmentFile=-/etc/diskadvisor/diskadvisor.env
+ExecStart=/opt/diskadvisor/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/diskadvisor/backend
+
+[Install]
+WantedBy=multi-user.target
