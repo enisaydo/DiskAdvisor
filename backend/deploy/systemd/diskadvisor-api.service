@@ -5,13 +5,19 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=diskadvisor
-Group=diskadvisor
+# Runs as root (no dedicated service user) -- explicit operator choice.
+# Be aware: this process accepts HTTP requests from the ITSM integration,
+# so a vulnerability in the API surface would give an attacker root on this
+# host. If that risk profile changes, add "User=diskadvisor" back and chown
+# /opt/diskadvisor accordingly.
 WorkingDirectory=/opt/diskadvisor/backend
 EnvironmentFile=-/etc/diskadvisor/diskadvisor.env
 ExecStart=/opt/diskadvisor/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4
 Restart=on-failure
 RestartSec=5
+# These sandboxing directives are independent of the running UID (they're
+# mount-namespace/capability restrictions, not permission checks), so they
+# still meaningfully reduce blast radius even running as root -- kept.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

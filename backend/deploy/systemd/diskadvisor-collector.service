@@ -4,11 +4,12 @@ After=network.target postgresql.service
 
 [Service]
 Type=oneshot
-User=diskadvisor
-Group=diskadvisor
+# Runs as root (no dedicated service user) -- explicit operator choice, see
+# diskadvisor-api.service for the note on what that means.
 WorkingDirectory=/opt/diskadvisor/backend
 EnvironmentFile=-/etc/diskadvisor/diskadvisor.env
 ExecStart=/opt/diskadvisor/backend/.venv/bin/python -m app.collector.collect_metrics
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/opt/diskadvisor/backend

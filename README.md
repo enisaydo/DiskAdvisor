@@ -103,6 +103,62 @@ Sonuçlar, aynı host/mount için `ssh_audit_cache_ttl_hours` (varsayılan 24s) 
 - `backend/deploy/systemd/diskadvisor-api.service`
 - `backend/deploy/systemd/diskadvisor-collector.service` + `.timer`
 
+**Root ile çalışır** (operatör kararı — dedicated `diskadvisor` sistem kullanıcısı kullanılmıyor). `User=`/`Group=` satırları unit dosyalarında yok, systemd varsayılan olarak root ile çalıştırır. `NoNewPrivileges`/`ProtectSystem=strict`/`ProtectHome` sandbox direktifleri yine de bırakıldı — bunlar UID'den bağımsız mount-namespace kısıtlamaları, root ile çalışsa bile saldırı yüzeyini daraltmaya devam eder. Risk: bu servis dışarıdan (ITSM) HTTP isteği kabul ediyor, API'de bir güvenlik açığı olursa saldırgan doğrudan root kazanır — kabul edilen risk.
+
+## RHEL prod kurulumu (özet)
+
+Dizin yapısı: `/opt/diskadvisor/backend` (kod + venv), `/opt/diskadvisor/frontend/dist` (frontend build çıktısı, nginx sunar), `/etc/diskadvisor/diskadvisor.env` (gerçek config).
+
+```bash
+# --- Paketler ---
+dnf module enable postgresql:15
+dnf install -y postgresql-server postgresql-contrib python3.11 python3.11-pip nginx
+postgresql-setup --initdb
+systemctl enable --now postgresql
+# ansible-core/ansible-runner GEREKMİYOR: backend sadece AAP Controller'a HTTPS ile istek atıyor.
+# gcc/python3-devel GEREKMİYOR: psycopg2-binary hazır derlenmiş wheel.
+
+# --- Dizinler + kod ---
+mkdir -p /opt/diskadvisor /etc/diskadvisor
+git clone https://github.com/enisaydo/DiskAdvisor.git /opt/diskadvisor/src
+cp -r /opt/diskadvisor/src/backend /opt/diskadvisor/backend
+cp -r /opt/diskadvisor/src/frontend/dist /opt/diskadvisor/frontend
+
+# --- Backend venv ---
+cd /opt/diskadvisor/backend
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example /etc/diskadvisor/diskadvisor.env
+vi /etc/diskadvisor/diskadvisor.env   # DB_URL, Dynatrace token, AAP Controller token/job_template_id
+
+# --- PostgreSQL: DB + kullanıcı ---
+sudo -u postgres psql -c "CREATE USER diskadvisor WITH PASSWORD '...';"
+sudo -u postgres psql -c "CREATE DATABASE diskadvisor OWNER diskadvisor;"
+# not: bu sadece PostgreSQL içindeki DB rolü, işletim sistemi kullanıcısı değil.
+
+# --- Migration ---
+.venv/bin/alembic -c app/db/alembic.ini upgrade head
+
+# --- systemd ---
+cp deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now diskadvisor-api
+systemctl enable --now diskadvisor-collector.timer
+
+# --- nginx: statik frontend + /api/ reverse proxy ---
+firewall-cmd --permanent --add-service=http --add-service=https && firewall-cmd --reload
+```
+
+nginx örnek config (`/etc/nginx/conf.d/diskadvisor.conf`):
+```nginx
+server {
+    listen 80;
+    root /opt/diskadvisor/frontend/dist;
+    location /api/ { proxy_pass http://127.0.0.1:8000; }
+    location / { try_files $uri /index.html; }
+}
+```
+
 ## Stub / mock olan kısımlar (önemli)
 
 - **Dynatrace bağlantısı**: `app/services/dynatrace_client.py` gerçek bir Entities API v2 + Metrics API v2 istemcisidir (RHEL host keşfi + disk kullanım metrikleri) ama bu oturumda **canlı bir Dynatrace tenant'ına karşı çalıştırılmadı**; testlerde mock HTTP transport kullanılır. `list_rhel_hosts` host'ları `osType(LINUX)` ile sunucu tarafında, `osVersion` içinde "Red Hat" geçenleri istemci tarafında filtreler (Dynatrace'in distro bazlı bir entitySelector'ü yok).
