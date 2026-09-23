@@ -18,6 +18,7 @@ silent APPROVE (see scoring.py).
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import time
 from dataclasses import dataclass
 
@@ -26,6 +27,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.models import DirectoryAudit, Host
+
+logger = logging.getLogger("diskadvisor.ssh_audit")
 
 _TERMINAL_STATUSES = {"successful", "failed", "error", "canceled"}
 
@@ -68,6 +71,12 @@ def _launch_controller_job(hostname: str, mount_point: str, settings: Settings) 
     """
     base_url = settings.ansible_controller_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {settings.ansible_controller_token}"}
+    log_ctx = "host=%s mount=%s template_id=%s controller=%s" % (
+        hostname,
+        mount_point,
+        settings.ansible_controller_job_template_id,
+        base_url,
+    )
 
     with httpx.Client(base_url=base_url, headers=headers, verify=settings.ansible_controller_verify_ssl) as client:
         try:
@@ -81,8 +90,30 @@ def _launch_controller_job(hostname: str, mount_point: str, settings: Settings) 
             )
             launch_resp.raise_for_status()
             job_id = launch_resp.json()["job"]
-        except (httpx.HTTPError, KeyError):
+        except httpx.TimeoutException as exc:
+            logger.warning("AAP Controller job launch zaman aşımına uğradı (%s): %s", log_ctx, exc)
             return None
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "AAP Controller job launch HTTP hatası (%s): status=%s body=%s",
+                log_ctx,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            return None
+        except httpx.HTTPError as exc:
+            # Connection refused/reset, DNS failure, TLS handshake failure, etc.
+            logger.warning("AAP Controller'a bağlanılamadı (%s): %s: %s", log_ctx, type(exc).__name__, exc)
+            return None
+        except KeyError:
+            logger.warning(
+                "AAP Controller launch cevabında beklenen 'job' alanı yok (%s): body=%s",
+                log_ctx,
+                launch_resp.text[:500],
+            )
+            return None
+
+        logger.info("AAP Controller job başlatıldı (%s): job_id=%s", log_ctx, job_id)
 
         deadline = time.monotonic() + settings.ssh_audit_timeout_seconds
         job_payload: dict = {}
@@ -91,22 +122,42 @@ def _launch_controller_job(hostname: str, mount_point: str, settings: Settings) 
                 status_resp = client.get(f"/api/controller/v2/jobs/{job_id}/", timeout=settings.ssh_audit_timeout_seconds)
                 status_resp.raise_for_status()
                 job_payload = status_resp.json()
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "AAP Controller job durumu sorgulanamadı (%s, job_id=%s): %s: %s",
+                    log_ctx, job_id, type(exc).__name__, exc,
+                )
                 return None
 
             if job_payload.get("status") in _TERMINAL_STATUSES:
                 break
             time.sleep(settings.ansible_controller_poll_interval_seconds)
         else:
-            return None  # poll budget exhausted before a terminal status was reached
+            logger.warning(
+                "AAP Controller job zaman aşımına uğradı (%s, job_id=%s): %ss içinde terminal duruma gelmedi, son durum=%s",
+                log_ctx, job_id, settings.ssh_audit_timeout_seconds, job_payload.get("status"),
+            )
+            return None
 
         if job_payload.get("status") != "successful":
+            logger.warning(
+                "AAP Controller job başarısız (%s, job_id=%s): status=%s",
+                log_ctx, job_id, job_payload.get("status"),
+            )
             return None
 
         # The playbook publishes results via `ansible.builtin.set_stats`,
         # which Controller surfaces as the job's `artifacts` dict.
         artifacts = job_payload.get("artifacts") or {}
-        return artifacts or None
+        if not artifacts:
+            logger.warning(
+                "AAP Controller job başarılı ama artifacts boş (%s, job_id=%s) -- "
+                "playbook'ta set_stats adımı çalışmamış olabilir.",
+                log_ctx, job_id,
+            )
+            return None
+        logger.info("AAP Controller job tamamlandı (%s, job_id=%s)", log_ctx, job_id)
+        return artifacts
 
 
 def run_audit(

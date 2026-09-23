@@ -102,3 +102,63 @@ def test_launch_controller_job_posts_limit_and_extra_vars(monkeypatch):
 
     assert captured["json"] == {"limit": "host03", "extra_vars": {"target_mount_point": "/var"}}
     assert facts["logrotate_findings"]["reclaimable_bytes"] == 42
+
+
+def test_launch_controller_job_logs_connection_failure(monkeypatch, caplog):
+    """Regression test: a failed audit must leave a trace in the logs
+    (journalctl -u diskadvisor-api), not silently return None with no
+    indication of *why* the "AAP Controller audit unavailable" fallback to
+    MANUAL_REVIEW happened."""
+    settings = Settings(
+        ansible_controller_base_url="https://aap.example.internal",
+        ansible_controller_job_template_id=42,
+        ssh_audit_timeout_seconds=1.0,
+    )
+
+    def handler(request):
+        raise httpx.ConnectError("Connection refused", request=request)
+
+    transport = httpx.MockTransport(handler)
+    real_client_cls = httpx.Client
+
+    def client_factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_client_cls(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client_factory)
+
+    with caplog.at_level("WARNING", logger="diskadvisor.ssh_audit"):
+        result = ssh_audit._launch_controller_job("host04", "/var", settings)
+
+    assert result is None
+    assert any("host04" in record.message and "bağlanılamadı" in record.message for record in caplog.records)
+
+
+def test_launch_controller_job_logs_poll_timeout(monkeypatch, caplog):
+    settings = Settings(
+        ansible_controller_base_url="https://aap.example.internal",
+        ansible_controller_job_template_id=42,
+        ansible_controller_poll_interval_seconds=0.0,
+        ssh_audit_timeout_seconds=0.05,  # tiny budget -> guaranteed to time out below
+    )
+
+    def handler(request):
+        if request.url.path == "/api/controller/v2/job_templates/42/launch/":
+            return httpx.Response(201, json={"job": 1})
+        # Job never reaches a terminal status within the poll budget.
+        return httpx.Response(200, json={"status": "running"})
+
+    transport = httpx.MockTransport(handler)
+    real_client_cls = httpx.Client
+
+    def client_factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_client_cls(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client_factory)
+
+    with caplog.at_level("WARNING", logger="diskadvisor.ssh_audit"):
+        result = ssh_audit._launch_controller_job("host05", "/var", settings)
+
+    assert result is None
+    assert any("zaman aşımına uğradı" in record.message for record in caplog.records)

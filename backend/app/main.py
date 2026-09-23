@@ -1,8 +1,18 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import advisor, health, hosts, requests
 from app.core.config import get_settings
+
+# Without this, app-level loggers (e.g. app.services.ssh_audit) have no
+# handler attached and their messages are silently dropped -- uvicorn only
+# configures its OWN "uvicorn"/"uvicorn.access" loggers, not the root logger
+# our modules propagate to. This is what made AAP Controller audit failures
+# ("sunucuya erişemedi veya zaman aşımına uğradı") show up nowhere in
+# `journalctl -u diskadvisor-api`.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 settings = get_settings()
 
