@@ -83,6 +83,20 @@ Build doğrulaması:
 npm run build
 ```
 
+### Frontend değiştiğinde (önemli — prod sunucuda Node.js yok)
+
+Prod RHEL sunucusunda Node.js kurulu değil, deploy `git pull` ile yapılıyor. Bu yüzden `frontend/dist/` (build çıktısı) **istisnai olarak git'e commit ediliyor** (normalde `.gitignore`'da olurdu). Frontend kaynağında (`frontend/src/`) her değişiklikten sonra:
+
+```bash
+cd frontend
+npm run build          # dist/ içeriğini günceller
+git add dist
+git commit -m "frontend: dist güncellendi"
+git push
+```
+
+Sunucuda `git pull` sonrası `dist/` zaten güncel olur, ayrıca bir kopyalama adımına gerek kalmaz. **`npm run build` çalıştırmadan `dist` commit edilmemeli** — kaynakla dist birbirinden sürüklenirse sunucudaki UI eski kalır.
+
 ## Ansible entegrasyonu (AAP Controller, önemli)
 
 DiskAdvisor sunucularda ajan çalıştırmaz, SSH açmaz ve Ansible'ı kendi üzerinde çalıştırmaz — sadece bir **AAP Controller API istemcisidir**:
@@ -122,13 +136,11 @@ systemctl enable --now postgresql
 mkdir -p /opt/diskadvisor /etc/diskadvisor
 git clone https://github.com/enisaydo/DiskAdvisor.git /opt/diskadvisor/src
 cp -r /opt/diskadvisor/src/backend /opt/diskadvisor/backend
-
-# frontend/dist .gitignore'dadır (build artifact) -- `git clone` sunucuda dist
-# vermez! Bu sunucuda Node.js YOKSA, build'i Node olan bir makinede (CI ya da
-# geliştirme makinesi) yapıp SADECE dist/ klasörünü buraya taşıyın:
-#   (geliştirme makinesinde) cd frontend && npm install && npm run build
-#   (transfer)               scp -r frontend/dist/. root@<sunucu>:/opt/diskadvisor/frontend/dist/
-mkdir -p /opt/diskadvisor/frontend/dist   # hedef önceden var olmalı, yoksa cp/scp dosyaları yanlış derinliğe koyar
+cp -r /opt/diskadvisor/src/frontend/dist /opt/diskadvisor/frontend/dist
+# frontend/dist repoya commit edilmiş build çıktısıdır (prod sunucuda Node
+# yok) -- git clone ile geldi, ayrıca build/scp gerekmez. Bkz. "Frontend
+# değiştiğinde" notu: kaynak değişince dist yeniden build edilip commit
+# edilmeli, yoksa sunucudaki UI eski kalır.
 
 # --- Backend venv ---
 cd /opt/diskadvisor/backend

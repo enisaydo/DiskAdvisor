@@ -10,7 +10,10 @@ backend/.coverage
 
 # Frontend
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/ İSTEĞE BAĞLI OLARAK COMMIT EDİLİYOR: prod sunucuda Node.js
+# yok, deploy `git pull` ile yapılıyor, o yüzden build çıktısı repoya
+# dahil edildi (bkz. README "Frontend değiştiğinde" notu). Kaynak
+# değiştiğinde `npm run build` ile yeniden üretip commit etmeyi unutmayın.
 frontend/.env
 
 # OS / editors
