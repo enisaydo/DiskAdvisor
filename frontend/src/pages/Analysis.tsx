@@ -103,19 +103,27 @@ export default function Analysis() {
 
       <div className="card">
         <h3>Disk kullanım trendi ({selected || "-"} — {selectedMount || "-"})</h3>
-        <LineChart values={diskMetricsForMount.map((m) => m.used_pct)} height={160} min={0} max={100} color="#14213d" />
+        <LineChart
+          values={diskMetricsForMount.map((m) => m.used_pct)}
+          timestamps={diskMetricsForMount.map((m) => new Date(m.collected_at).getTime())}
+          height={160}
+          min={0}
+          max={100}
+          color="#14213d"
+        />
       </div>
 
       <div className="analysis-grid">
         {correlation.map((series) => {
           const values = series.points.map((p) => p.value ?? 0);
+          const timestamps = series.points.map((p) => p.timestamp_ms);
           const latest = series.points[series.points.length - 1]?.value;
           return (
             <div className="card" key={series.metric_id}>
               <h3>
                 {series.label} {latest != null && <span className="metric-latest">({latest.toFixed(1)} {series.unit})</span>}
               </h3>
-              <LineChart values={values} height={100} color="#2563eb" />
+              <LineChart values={values} timestamps={timestamps} height={100} color="#2563eb" />
             </div>
           );
         })}

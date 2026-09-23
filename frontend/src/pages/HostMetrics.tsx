@@ -139,7 +139,13 @@ export default function HostMetrics() {
 
       <div className="card">
         <h3>Disk kullanım trendi ({selected || "-"} — {selectedMount || "-"})</h3>
-        <LineChart values={metricsForMount.map((m) => m.used_pct)} height={200} min={0} max={100} />
+        <LineChart
+          values={metricsForMount.map((m) => m.used_pct)}
+          timestamps={metricsForMount.map((m) => new Date(m.collected_at).getTime())}
+          height={200}
+          min={0}
+          max={100}
+        />
         {selected && (
           <Link className="inline-link" to={`/analysis?host=${encodeURIComponent(selected)}`}>
             Bu host için CPU/bellek/network korelasyon analizine git →

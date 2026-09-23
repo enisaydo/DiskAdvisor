@@ -12,6 +12,20 @@ from app.services.dynatrace_client import CORRELATION_METRIC_LABELS, DynatraceCl
 router = APIRouter(prefix="/hosts", tags=["hosts"])
 
 
+def _resolution_for_window(lookback_days: int) -> str:
+    """Scales the Metrics API `resolution` to the requested window so a
+    chart never gets flooded with points regardless of how many days are
+    selected (e.g. 30 days at fixed 1h resolution would be ~720 points --
+    unreadable on a simple line chart). Caps out around 150-200 points."""
+    if lookback_days <= 2:
+        return "1h"
+    if lookback_days <= 7:
+        return "2h"
+    if lookback_days <= 14:
+        return "4h"
+    return "1d"
+
+
 @router.get("", response_model=list[HostOut])
 def list_hosts(db: Session = Depends(get_db)):
     return db.execute(select(Host).order_by(Host.hostname)).scalars().all()
@@ -75,6 +89,7 @@ def get_host_correlation(
         entity_id=host.dt_entity_id,
         metric_selectors=settings.dynatrace_correlation_metrics,
         time_from=f"-{lookback_days}d",
+        resolution=_resolution_for_window(lookback_days),
     )
 
     result = []

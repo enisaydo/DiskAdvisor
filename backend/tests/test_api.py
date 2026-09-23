@@ -1,9 +1,18 @@
 from unittest.mock import patch
 
+from app.api.routes.hosts import _resolution_for_window
 from app.db.models import Host
 from app.main import app
 from app.services import ssh_audit
 from app.services.dynatrace_client import MetricPoint, MetricSeries, get_dynatrace_client
+
+
+def test_resolution_for_window_scales_with_lookback_days():
+    assert _resolution_for_window(1) == "1h"
+    assert _resolution_for_window(2) == "1h"
+    assert _resolution_for_window(7) == "2h"
+    assert _resolution_for_window(14) == "4h"
+    assert _resolution_for_window(30) == "1d"
 
 
 def _fake_audit_available(*args, **kwargs):
@@ -161,6 +170,7 @@ def test_host_correlation_returns_labeled_series(client, db_session):
     class FakeDynatraceClient:
         def query_metrics(self, entity_id, metric_selectors, resolution="1h", time_from="-7d"):
             assert entity_id == "HOST-XYZ"
+            assert resolution == "2h"  # 7-day window -> 2h resolution, see _resolution_for_window
             return {
                 "builtin:host.cpu.usage": MetricSeries(
                     metric_id="builtin:host.cpu.usage",
