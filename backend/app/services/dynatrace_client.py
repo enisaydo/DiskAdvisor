@@ -98,6 +98,7 @@ class DynatraceClient:
             base_url=self._settings.dynatrace_base_url,
             timeout=self._settings.dynatrace_timeout_seconds,
             headers={"Authorization": f"Api-Token {self._settings.dynatrace_api_token}"},
+            verify=self._settings.dynatrace_verify_ssl,
         )
 
     def close(self) -> None:

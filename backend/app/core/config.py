@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     dynatrace_metric_usedpct_selector: str = "builtin:host.disk.usedPct"
     dynatrace_metric_available_selector: str = "builtin:host.disk.availableBytes"
     dynatrace_timeout_seconds: float = 10.0
+    # False for self-signed/internal-CA Dynatrace Managed or ActiveGate
+    # endpoints where the RHEL host doesn't trust the issuing CA. Prefer
+    # trusting the CA (update-ca-trust) over this in the long run --
+    # disabling verification accepts any certificate, including a forged
+    # one from a network-level attacker.
+    dynatrace_verify_ssl: bool = True
 
     # --- Correlation analysis (on-demand, per suspicious host -- see /hosts/{hostname}/correlation) ---
     # Host-level CPU/memory/network/disk-I/O metrics queried live from Dynatrace

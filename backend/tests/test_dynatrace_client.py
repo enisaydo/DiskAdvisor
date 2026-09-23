@@ -1,5 +1,6 @@
 import httpx
 
+from app.core.config import Settings
 from app.services.dynatrace_client import DynatraceClient
 
 
@@ -49,6 +50,22 @@ def test_query_disk_usage_parses_and_merges_both_metrics():
     # available=20GB at 80% used -> capacity=100GB, used=80GB
     assert first.capacity_bytes == 100 * 1024 ** 3
     assert first.used_bytes == 80 * 1024 ** 3
+
+
+def test_dynatrace_verify_ssl_setting_propagates_to_client(monkeypatch):
+    captured = {}
+    real_client_cls = httpx.Client
+
+    def client_factory(*args, **kwargs):
+        captured["verify"] = kwargs.get("verify")
+        kwargs["transport"] = httpx.MockTransport(lambda r: httpx.Response(200, json={"result": []}))
+        return real_client_cls(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client_factory)
+
+    DynatraceClient(settings=Settings(dynatrace_verify_ssl=False))
+
+    assert captured["verify"] is False
 
 
 def test_query_disk_usage_raises_on_http_error():
