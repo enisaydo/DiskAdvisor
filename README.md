@@ -173,6 +173,20 @@ nginx -t && systemctl enable --now nginx
 
 nginx config'i repoda: `backend/deploy/nginx/diskadvisor.conf` — **düz HTTP, TLS yok** (operatör kararı: sunucuda sertifika yok, internal ağ). SELinux notu ve `proxy_set_header` başlıkları dahil, dokümantasyon amaçlı — bu oturumda gerçek bir nginx'e karşı test edilmedi.
 
+### Kod güncellendiğinde (dikkat — `cp -r kaynak hedef` hedef zaten varsa yanlış davranır)
+
+`cp -r /opt/diskadvisor/src/backend /opt/diskadvisor/backend` komutu **sadece ilk kurulumda** doğru çalışır (hedef henüz yok). Hedef zaten varsa (ikinci deploy), `cp -r` kaynağı hedefin **içine bir alt klasör olarak gömer** (`/opt/diskadvisor/backend/backend/...` oluşur) — `.venv` bu sırada silinmez ama artık üstündeki `app/` kodu güncellenmemiş olur, ya da siz önce `rm -rf /opt/diskadvisor/backend` yaptıysanız `.venv` de tamamen gider (`ImportError: .venv/bin/python: No such file or directory`).
+
+**Sonraki güncellemelerde bunun yerine** (kaynaktaki `/.` sonu önemli — içeriği kopyalar, klasörü gömmez, `.venv`'e dokunmaz çünkü kaynakta `.venv` hiç yok):
+```bash
+cd /opt/diskadvisor/src && git pull
+cp -r backend/. /opt/diskadvisor/backend/
+cp -r frontend/dist/. /opt/diskadvisor/frontend/dist/
+.venv/bin/pip install -r /opt/diskadvisor/backend/requirements.txt -q   # requirements değiştiyse
+cd /opt/diskadvisor/backend && .venv/bin/alembic -c app/db/alembic.ini upgrade head   # migration varsa
+systemctl restart diskadvisor-api
+```
+
 ## Stub / mock olan kısımlar (önemli)
 
 - **Dynatrace bağlantısı**: `app/services/dynatrace_client.py` gerçek bir Entities API v2 + Metrics API v2 istemcisidir (RHEL host keşfi + disk kullanım metrikleri) ama bu oturumda **canlı bir Dynatrace tenant'ına karşı çalıştırılmadı**; testlerde mock HTTP transport kullanılır. `list_rhel_hosts` host'ları `osType(LINUX)` ile sunucu tarafında, `osVersion` içinde "Red Hat" geçenleri istemci tarafında filtreler (Dynatrace'in distro bazlı bir entitySelector'ü yok).
