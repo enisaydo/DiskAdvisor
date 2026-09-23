@@ -122,7 +122,13 @@ systemctl enable --now postgresql
 mkdir -p /opt/diskadvisor /etc/diskadvisor
 git clone https://github.com/enisaydo/DiskAdvisor.git /opt/diskadvisor/src
 cp -r /opt/diskadvisor/src/backend /opt/diskadvisor/backend
-cp -r /opt/diskadvisor/src/frontend/dist /opt/diskadvisor/frontend
+
+# frontend/dist .gitignore'dadır (build artifact) -- `git clone` sunucuda dist
+# vermez! Bu sunucuda Node.js YOKSA, build'i Node olan bir makinede (CI ya da
+# geliştirme makinesi) yapıp SADECE dist/ klasörünü buraya taşıyın:
+#   (geliştirme makinesinde) cd frontend && npm install && npm run build
+#   (transfer)               scp -r frontend/dist/. root@<sunucu>:/opt/diskadvisor/frontend/dist/
+mkdir -p /opt/diskadvisor/frontend/dist   # hedef önceden var olmalı, yoksa cp/scp dosyaları yanlış derinliğe koyar
 
 # --- Backend venv ---
 cd /opt/diskadvisor/backend
@@ -146,7 +152,7 @@ systemctl enable --now diskadvisor-api
 systemctl enable --now diskadvisor-collector.timer
 
 # --- nginx: statik frontend + /api/ reverse proxy ---
-firewall-cmd --permanent --add-service=http --add-service=https && firewall-cmd --reload
+firewall-cmd --permanent --add-service=http && firewall-cmd --reload
 setsebool -P httpd_can_network_connect 1   # SELinux: nginx'in 8000'e (uvicorn) proxy_pass yapmasına izin ver
 cp backend/deploy/nginx/diskadvisor.conf /etc/nginx/conf.d/diskadvisor.conf
 # /etc/nginx/nginx.conf içindeki varsayılan `server {}` bloğunu kaldırın/yorumlayın (port 80 çakışması)
@@ -161,6 +167,12 @@ nginx config'i repoda: `backend/deploy/nginx/diskadvisor.conf` — **düz HTTP, 
 - **AAP Controller audit**: `app/services/ssh_audit.py` gerçek bir Controller REST istemcisidir (launch + poll + artifacts) ama gerçek bir AAP Controller/RHEL host olmadan uçtan uca test edilemez; unit testlerde `launch_fn` ve mock HTTP transport kullanılır. `backend/deploy/ansible/audit_disk.yml` gerçek fleet'e karşı bu oturumda çalıştırılmadı — job template olarak Controller'a elle yüklenmesi gerekir.
 - **Frontend**: gerçek backend'e bağlanacak şekilde yazıldı; backend çalışmıyorsa sayfalar otomatik olarak mock veriyle render olur.
 - **nginx config**: `backend/deploy/nginx/diskadvisor.conf` dokümantasyon amaçlıdır, gerçek bir nginx/SELinux'a karşı bu oturumda test edilmedi. Düz HTTP (TLS yok) — operatör kararı.
+
+## Sık karşılaşılan deploy hataları
+
+- **`curl http://.../` boş sayfa döner, browser console'da `Failed to load module script ... MIME type "application/octet-stream" ... main.tsx`**: `frontend/dist/` (build çıktısı) yerine `frontend/` kaynak kodu sunucuya kopyalanmış demektir. `frontend/index.html` (kaynak) `/src/main.tsx`'e referans verir, bunu sadece Vite dev server derleyebilir — nginx statik olarak sunamaz. Çözüm: `npm run build` ile üretilen `dist/index.html` (`./assets/index-*.js`'e referans verir) sunucuya kopyalanmalı, kaynak değil.
+- **nginx `root` yolu ile gerçek dosyaların bulunduğu yol uyuşmuyorsa** (`index.html` config'deki `root`'un bir alt/üst dizininde duruyorsa): `error.log`'da `rewrite or internal redirection cycle while internally redirecting to "/index.html"` hatası görülür. `root` direktifini `index.html`'in gerçekte bulunduğu dizine eşitleyin.
+- **Prod build'de API çağrıları tarayıcıdan `localhost:8000`'e gitmeye çalışıyor**: `VITE_API_BASE_URL` build zamanında ayarlanmamış demektir, `client.ts`'teki fallback (`http://localhost:8000`) derlenmiş JS'e gömülür. `frontend/.env.production` (`VITE_API_BASE_URL=` boş) bunu düzeltir — böylece istekler aynı origin üzerinden relative `/api/v1/...` gider, nginx'in `/api/` proxy'si devreye girer.
 
 ## Doğrulama durumu
 
