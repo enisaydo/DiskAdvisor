@@ -120,15 +120,18 @@ def test_query_disk_usage_keeps_disks_separate_when_mountpoint_dimension_is_miss
 
 
 def test_list_all_disks_paginates_and_resolves_host():
+    # Shape confirmed against a live Dynatrace tenant: DISK.displayName is
+    # the real mount point (properties.mountPoint is NOT a valid DISK
+    # property here), and the HOST relationship is a fromRelationship.
     page1 = {
         "entities": [
             {
                 "entityId": "DISK-1",
-                "properties": {"mountPoint": "/var"},
-                "toRelationships": {"isDiskOf": [{"id": "HOST-1"}]},
+                "displayName": "/var",
+                "fromRelationships": {"isDiskOf": [{"id": "HOST-1"}]},
             },
             # No host relationship -- must be skipped, nothing to attach it to.
-            {"entityId": "DISK-ORPHAN", "properties": {"mountPoint": "/orphan"}, "toRelationships": {}},
+            {"entityId": "DISK-ORPHAN", "displayName": "/orphan", "fromRelationships": {}},
         ],
         "nextPageKey": "page2token",
     }
@@ -136,8 +139,8 @@ def test_list_all_disks_paginates_and_resolves_host():
         "entities": [
             {
                 "entityId": "DISK-2",
-                "properties": {"mountPoint": "/"},
-                "toRelationships": {"isDiskOf": [{"id": "HOST-1"}]},
+                "displayName": "/",
+                "fromRelationships": {"isDiskOf": [{"id": "HOST-1"}]},
             },
         ],
     }

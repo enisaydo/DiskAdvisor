@@ -105,17 +105,27 @@ export function mockCorrelationFor(_hostname: string): CorrelationSeriesOut[] {
   ];
 }
 
+// A host normally has several distinct filesystems (Dynatrace DISK entities,
+// not just one) -- mock data reflects that so the mount-point selector in
+// HostMetrics/Analiz is exercised even without a live backend.
+const MOCK_FILESYSTEMS: { mount_point: string; base_pct: number; growth_per_sample: number; capacity_gb: number }[] = [
+  { mount_point: "/", base_pct: 30, growth_per_sample: 1.5, capacity_gb: 30 },
+  { mount_point: "/var/log", base_pct: 40, growth_per_sample: 2.5, capacity_gb: 100 },
+  { mount_point: "/var/log/audit", base_pct: 85, growth_per_sample: 1.0, capacity_gb: 2 },
+];
+
 export function mockMetricsFor(hostname: string): DiskMetricOut[] {
-  const base = 40;
-  return Array.from({ length: 14 }).map((_, i) => {
-    const usedPct = Math.min(95, base + i * 2.5);
-    const capacity = 100 * 1024 ** 3;
-    return {
-      mount_point: "/var/log",
-      capacity_bytes: capacity,
-      used_bytes: Math.round((usedPct / 100) * capacity),
-      used_pct: Math.round(usedPct * 10) / 10,
-      collected_at: new Date(Date.UTC(2026, 8, 8 + i)).toISOString(),
-    };
-  });
+  return MOCK_FILESYSTEMS.flatMap((fs) =>
+    Array.from({ length: 14 }).map((_, i) => {
+      const usedPct = Math.min(99, fs.base_pct + i * fs.growth_per_sample);
+      const capacity = fs.capacity_gb * 1024 ** 3;
+      return {
+        mount_point: fs.mount_point,
+        capacity_bytes: capacity,
+        used_bytes: Math.round((usedPct / 100) * capacity),
+        used_pct: Math.round(usedPct * 10) / 10,
+        collected_at: new Date(Date.UTC(2026, 8, 8 + i)).toISOString(),
+      };
+    })
+  );
 }

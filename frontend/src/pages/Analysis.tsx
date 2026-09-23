@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, CorrelationSeriesOut, DiskMetricOut, HostOut } from "../api/client";
 import { mockCorrelationFor, mockHosts, mockMetricsFor } from "../api/mockData";
 import LineChart from "../components/LineChart";
@@ -13,6 +13,7 @@ export default function Analysis() {
   const [selected, setSelected] = useState<string>("");
   const [days, setDays] = useState(7);
   const [diskMetrics, setDiskMetrics] = useState<DiskMetricOut[]>([]);
+  const [selectedMount, setSelectedMount] = useState<string>("");
   const [correlation, setCorrelation] = useState<CorrelationSeriesOut[]>([]);
   const [usingMock, setUsingMock] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -47,6 +48,24 @@ export default function Analysis() {
       .finally(() => setLoading(false));
   }, [selected, days]);
 
+  // Same reasoning as Host Metrikleri: a host can have several distinct
+  // filesystems, so the trend chart is always scoped to one mount point.
+  const mountPoints = useMemo(
+    () => Array.from(new Set(diskMetrics.map((m) => m.mount_point))).sort(),
+    [diskMetrics]
+  );
+
+  useEffect(() => {
+    if (mountPoints.length && !mountPoints.includes(selectedMount)) {
+      setSelectedMount(mountPoints[0]);
+    }
+  }, [mountPoints, selectedMount]);
+
+  const diskMetricsForMount = useMemo(
+    () => diskMetrics.filter((m) => m.mount_point === selectedMount),
+    [diskMetrics, selectedMount]
+  );
+
   return (
     <div>
       <h2>Analiz</h2>
@@ -67,13 +86,18 @@ export default function Analysis() {
           <option value={14}>Son 14 gün</option>
           <option value={30}>Son 30 gün</option>
         </select>
+        <select value={selectedMount} onChange={(e) => setSelectedMount(e.target.value)} disabled={!mountPoints.length}>
+          {mountPoints.map((mp) => (
+            <option key={mp} value={mp}>{mp}</option>
+          ))}
+        </select>
       </div>
 
       {loading && <p>Yükleniyor...</p>}
 
       <div className="card">
-        <h3>Disk kullanım trendi ({selected || "-"})</h3>
-        <LineChart values={diskMetrics.map((m) => m.used_pct)} height={160} min={0} max={100} color="#14213d" />
+        <h3>Disk kullanım trendi ({selected || "-"} — {selectedMount || "-"})</h3>
+        <LineChart values={diskMetricsForMount.map((m) => m.used_pct)} height={160} min={0} max={100} color="#14213d" />
       </div>
 
       <div className="analysis-grid">
