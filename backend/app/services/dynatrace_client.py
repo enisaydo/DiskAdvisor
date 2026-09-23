@@ -71,8 +71,8 @@ class MetricSeries:
 CORRELATION_METRIC_LABELS: dict[str, tuple[str, str]] = {
     "builtin:host.cpu.usage": ("CPU kullanımı", "%"),
     "builtin:host.mem.usage": ("Bellek kullanımı", "%"),
-    "builtin:host.disk.read.bytes": ("Disk okuma", "bytes/s"),
-    "builtin:host.disk.write.bytes": ("Disk yazma", "bytes/s"),
+    "builtin:host.disk.bytesRead": ("Disk okuma", "bytes/s"),
+    "builtin:host.disk.bytesWritten": ("Disk yazma", "bytes/s"),
     "builtin:host.net.nic.bytesRx": ("Network alınan", "bytes/s"),
     "builtin:host.net.nic.bytesTx": ("Network gönderilen", "bytes/s"),
 }

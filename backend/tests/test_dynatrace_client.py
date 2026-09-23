@@ -40,7 +40,13 @@ def test_query_disk_usage_parses_and_merges_both_metrics():
     http_client = httpx.Client(transport=transport, base_url="https://fake.dynatrace.example")
     client = DynatraceClient(client=http_client)
 
-    points = client.query_disk_usage()
+    # Selectors passed explicitly so this test doesn't depend on the config
+    # default (which is tenant-specific -- see config.py's comment on why
+    # the real default is `builtin:host.disk.avail`, not `availableBytes`).
+    points = client.query_disk_usage(
+        usedpct_selector="builtin:host.disk.usedPct",
+        available_selector="builtin:host.disk.availableBytes",
+    )
 
     assert len(points) == 2
     first = points[0]

@@ -13,12 +13,17 @@ class Settings(BaseSettings):
     # --- Dynatrace ---
     # Two builtin per-disk-instance metrics are pulled together in one Metrics
     # API v2 query and merged by (host, mountPoint, timestamp): usedPct alone
-    # does not give absolute capacity, so availableBytes is used to derive
-    # used_bytes/capacity_bytes (capacity = available / (1 - usedPct/100)).
+    # does not give absolute capacity, so the free-space metric is used to
+    # derive used_bytes/capacity_bytes (capacity = available / (1 - usedPct/100)).
+    # Verified against a live Dynatrace Managed tenant via
+    # `GET /api/v2/metrics?text=disk`: that tenant has `builtin:host.disk.avail`,
+    # NOT `builtin:host.disk.availableBytes` (which doesn't exist and made the
+    # combined query 404) -- SaaS tenants may differ, always confirm via the
+    # browse endpoint above before relying on these defaults.
     dynatrace_base_url: str = "https://your-environment.live.dynatrace.com"
     dynatrace_api_token: str = "changeme"
     dynatrace_metric_usedpct_selector: str = "builtin:host.disk.usedPct"
-    dynatrace_metric_available_selector: str = "builtin:host.disk.availableBytes"
+    dynatrace_metric_available_selector: str = "builtin:host.disk.avail"
     dynatrace_timeout_seconds: float = 10.0
     # False for self-signed/internal-CA Dynatrace Managed or ActiveGate
     # endpoints where the RHEL host doesn't trust the issuing CA. Prefer
@@ -36,16 +41,19 @@ class Settings(BaseSettings):
     # Host-level CPU/memory/network/disk-I/O metrics queried live from Dynatrace
     # when someone opens the Analiz page for a specific host (a top-grower or a
     # host with a live request), never for the whole 6000-host fleet on a timer.
-    # IMPORTANT: these metric keys are Dynatrace's documented builtin host
-    # metrics but were never verified against a live tenant in this session --
-    # confirm they resolve to real data (Metrics API `GET /metrics` browse
-    # endpoint) before relying on this, and adjust the list via env if your
+    # The two disk I/O keys below were corrected against a live Dynatrace
+    # Managed tenant (`GET /api/v2/metrics?text=disk`): the originally
+    # guessed `builtin:host.disk.read.bytes`/`write.bytes` don't exist there,
+    # the real keys are `builtin:host.disk.bytesRead`/`bytesWritten`.
+    # cpu.usage/mem.usage/net.nic.* were NOT in that "disk" browse result and
+    # are still unverified -- confirm via `GET /api/v2/metrics?text=cpu` /
+    # `?text=network` before relying on them, and adjust via env if your
     # tenant uses different keys (e.g. an older OneAgent version).
     dynatrace_correlation_metrics: list[str] = [
         "builtin:host.cpu.usage",
         "builtin:host.mem.usage",
-        "builtin:host.disk.read.bytes",
-        "builtin:host.disk.write.bytes",
+        "builtin:host.disk.bytesRead",
+        "builtin:host.disk.bytesWritten",
         "builtin:host.net.nic.bytesRx",
         "builtin:host.net.nic.bytesTx",
     ]
