@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, FilesystemGrowthOut, FilesystemUsageOut, RequestOut } from "../api/client";
 import { mockHighUsage, mockRequests, mockTopGrowth } from "../api/mockData";
 
 const DECISIONS = ["APPROVE", "APPROVE_REDUCED", "MANUAL_REVIEW", "REJECT"] as const;
+
+function hostMetricsLink(hostname: string, mountPoint: string): string {
+  return `/hosts?host=${encodeURIComponent(hostname)}&mount=${encodeURIComponent(mountPoint)}`;
+}
 
 export default function Dashboard() {
   const [requests, setRequests] = useState<RequestOut[]>([]);
   const [topGrowth, setTopGrowth] = useState<FilesystemGrowthOut[]>([]);
   const [highUsage, setHighUsage] = useState<FilesystemUsageOut[]>([]);
   const [usingMock, setUsingMock] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     api
@@ -90,6 +96,7 @@ export default function Dashboard() {
 
       <div className="card">
         <h3>En çok büyüyen 10 file system (son 7 gün)</h3>
+        <p className="page-hint">Bir satıra tıklayınca o host'un o file system'inin trendine gidersiniz.</p>
         <table>
           <thead>
             <tr>
@@ -102,7 +109,7 @@ export default function Dashboard() {
           </thead>
           <tbody>
             {topGrowth.map((r) => (
-              <tr key={`${r.hostname}-${r.mount_point}`}>
+              <tr key={`${r.hostname}-${r.mount_point}`} onClick={() => navigate(hostMetricsLink(r.hostname, r.mount_point))}>
                 <td>{r.hostname}</td>
                 <td>{r.mount_point}</td>
                 <td>+{r.growth_pct_points.toFixed(1)}%</td>
@@ -112,12 +119,18 @@ export default function Dashboard() {
                 </td>
               </tr>
             ))}
+            {topGrowth.length === 0 && (
+              <tr>
+                <td colSpan={5}>Veri yok.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
       <div className="card">
         <h3>Doluluk %90 üzerinde olan file system'ler</h3>
+        <p className="page-hint">Bir satıra tıklayınca o host'un o file system'inin trendine gidersiniz.</p>
         <table>
           <thead>
             <tr>
@@ -128,7 +141,7 @@ export default function Dashboard() {
           </thead>
           <tbody>
             {highUsage.map((r) => (
-              <tr key={`${r.hostname}-${r.mount_point}`}>
+              <tr key={`${r.hostname}-${r.mount_point}`} onClick={() => navigate(hostMetricsLink(r.hostname, r.mount_point))}>
                 <td>{r.hostname}</td>
                 <td>{r.mount_point}</td>
                 <td>
@@ -139,6 +152,11 @@ export default function Dashboard() {
                 </td>
               </tr>
             ))}
+            {highUsage.length === 0 && (
+              <tr>
+                <td colSpan={3}>Veri yok.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

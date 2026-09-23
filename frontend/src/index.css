@@ -165,3 +165,18 @@ tr:hover td {
   color: #94a3b8;
   font-size: 13px;
 }
+
+.row-selected td {
+  background: #eef2ff;
+  font-weight: 600;
+}
+
+.inline-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.inline-link:hover {
+  text-decoration: underline;
+}

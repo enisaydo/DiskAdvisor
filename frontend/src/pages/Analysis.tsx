@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, CorrelationSeriesOut, DiskMetricOut, HostOut } from "../api/client";
 import { mockCorrelationFor, mockHosts, mockMetricsFor } from "../api/mockData";
 import LineChart from "../components/LineChart";
 
 // Correlation ("Analiz") page: pick a host (typically one flagged by the
-// Dashboard's top-growth / high-usage lists) and look at its disk usage
-// trend next to CPU/memory/network/disk-I/O over the same window, to see
-// whether a resource spike lines up with the growth -- on-demand, live from
-// Dynatrace, not a continuous fleet-wide collection (see backend README).
+// Dashboard's top-growth / high-usage lists, or via the "Analiz'e git" link
+// on Host Metrikleri) and look at its disk usage trend next to CPU/memory/
+// network/disk-I/O over the same window, to see whether a resource spike
+// lines up with the growth -- on-demand, live from Dynatrace, not a
+// continuous fleet-wide collection (see backend README).
 export default function Analysis() {
+  const [searchParams] = useSearchParams();
   const [hosts, setHosts] = useState<HostOut[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [days, setDays] = useState(7);
@@ -19,16 +22,19 @@ export default function Analysis() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const fromUrl = searchParams.get("host");
     api
       .listHosts()
       .then((hs) => {
         setHosts(hs);
-        if (hs.length) setSelected(hs[0].hostname);
+        if (fromUrl && hs.some((h) => h.hostname === fromUrl)) setSelected(fromUrl);
+        else if (hs.length) setSelected(hs[0].hostname);
       })
       .catch(() => {
         setHosts(mockHosts);
-        setSelected(mockHosts[0].hostname);
+        setSelected(fromUrl && mockHosts.some((h) => h.hostname === fromUrl) ? fromUrl : mockHosts[0].hostname);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
