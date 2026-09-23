@@ -175,6 +175,7 @@ class DynatraceClient:
         available_selector: str | None = None,
         resolution: str = "1h",
         time_from: str = "-25h",
+        batch_size: int | None = None,
     ) -> list[DiskUsagePoint]:
         """Queries usedPct + availableBytes for every disk/mount on every
         host in one call and returns merged data points (capacity_bytes and
@@ -185,9 +186,36 @@ class DynatraceClient:
         `entity_ids`, when given (the RHEL hosts from `list_rhel_hosts`),
         scopes the query server-side to just those hosts' disks via
         `entitySelector` -- metrics for non-RHEL hosts are never pulled.
+
+        Dynatrace's Metrics API v2 query endpoint is GET-only, so there is no
+        way to push a large `entityId(...)` list into a request body. With a
+        6000-host fleet a single `entitySelector` easily exceeds URL length
+        limits (414 Request-URI Too Large -- hit in practice around ~1800
+        IDs). `entity_ids` is therefore split into chunks of `batch_size`
+        (default `dynatrace_query_batch_size`, 100) and queried across
+        multiple requests, concatenating the results.
         """
         usedpct_sel = usedpct_selector or self._settings.dynatrace_metric_usedpct_selector
         available_sel = available_selector or self._settings.dynatrace_metric_available_selector
+        chunk_size = batch_size or self._settings.dynatrace_query_batch_size
+
+        if not entity_ids:
+            return self._query_disk_usage_page(usedpct_sel, available_sel, resolution, time_from, None)
+
+        points: list[DiskUsagePoint] = []
+        for i in range(0, len(entity_ids), chunk_size):
+            chunk = entity_ids[i : i + chunk_size]
+            points.extend(self._query_disk_usage_page(usedpct_sel, available_sel, resolution, time_from, chunk))
+        return points
+
+    def _query_disk_usage_page(
+        self,
+        usedpct_sel: str,
+        available_sel: str,
+        resolution: str,
+        time_from: str,
+        entity_ids: list[str] | None,
+    ) -> list[DiskUsagePoint]:
         params = {
             "metricSelector": f"{usedpct_sel},{available_sel}",
             "resolution": resolution,

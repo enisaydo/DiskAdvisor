@@ -95,6 +95,29 @@ def test_query_disk_usage_scopes_to_given_entity_ids():
     client.query_disk_usage(entity_ids=["HOST-1", "HOST-2"])
 
 
+def test_query_disk_usage_batches_large_entity_id_lists():
+    """A large fleet must not be queried in one URL -- Dynatrace's Metrics
+    API v2 query endpoint is GET-only and a single entitySelector scoped to
+    ~1800+ hosts hits 414 Request-URI Too Large in practice."""
+    seen_selectors = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_selectors.append(request.url.params["entitySelector"])
+        return httpx.Response(200, json={"result": []})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(transport=transport, base_url="https://fake.dynatrace.example")
+    client = DynatraceClient(client=http_client, settings=Settings(dynatrace_query_batch_size=2))
+
+    entity_ids = ["HOST-1", "HOST-2", "HOST-3", "HOST-4", "HOST-5"]
+    client.query_disk_usage(entity_ids=entity_ids)
+
+    assert len(seen_selectors) == 3  # ceil(5/2)
+    assert seen_selectors[0] == "type(HOST),entityId(HOST-1,HOST-2)"
+    assert seen_selectors[1] == "type(HOST),entityId(HOST-3,HOST-4)"
+    assert seen_selectors[2] == "type(HOST),entityId(HOST-5)"
+
+
 ENTITIES_RHEL_PAGE_1 = {
     "entities": [
         {"entityId": "HOST-RHEL1", "displayName": "app01", "properties": {"osVersion": "Red Hat Enterprise Linux 8.6"}},

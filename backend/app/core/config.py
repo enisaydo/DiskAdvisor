@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # disabling verification accepts any certificate, including a forged
     # one from a network-level attacker.
     dynatrace_verify_ssl: bool = True
+    # entitySelector's entityId(...) list is chunked to this many hosts per
+    # request -- the Metrics API v2 query endpoint is GET-only, and a single
+    # request scoped to the whole ~6000-host fleet hits 414 Request-URI Too
+    # Large (observed in practice around ~1800 IDs in one URL).
+    dynatrace_query_batch_size: int = 100
 
     # --- Correlation analysis (on-demand, per suspicious host -- see /hosts/{hostname}/correlation) ---
     # Host-level CPU/memory/network/disk-I/O metrics queried live from Dynatrace
