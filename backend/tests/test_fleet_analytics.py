@@ -43,6 +43,42 @@ def test_top_growing_filesystems_ranks_by_pct_points_not_gb(db_session):
     assert results[1].growth_gb == 100.0  # bigger absolute growth, but ranked lower
 
 
+def test_top_growing_filesystems_ignores_noisy_earliest_capacity(db_session):
+    """Regression test: a single noisy usedPct reading near 100% at the
+    earliest sample inflates that row's derived capacity_bytes wildly
+    (capacity = avail / (1 - usedPct/100)). growth_gb must stay consistent
+    with growth_pct_points (derived from the LATEST, trustworthy capacity),
+    not from the raw used_bytes delta between the two samples."""
+    host = Host(hostname="noisy-host")
+    db_session.add(host)
+    db_session.commit()
+    db_session.refresh(host)
+
+    # Earliest sample: usedPct=99.99 with avail=1MB -> capacity blows up to
+    # ~10TB, used_bytes ~10TB, even though the disk is really 13GB.
+    db_session.add(
+        DiskMetric(
+            host_id=host.id,
+            mount_point="/",
+            capacity_bytes=10 * 1024 ** 4,
+            used_bytes=int(10 * 1024 ** 4 * 0.9999),
+            used_pct=99.99,
+            collected_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=6),
+        )
+    )
+    # Latest sample: the real, stable 13GB disk at 60% used.
+    _add_metric(db_session, host, "/", used_pct=60.0, days_ago=0, capacity_gb=13)
+    db_session.flush()
+
+    results = top_growing_filesystems(db_session, days=7)
+
+    assert len(results) == 1
+    # 60.0 - 99.99 = -39.99 points -> shrank, not a 160GB-on-a-13GB-disk artifact.
+    assert results[0].growth_pct_points == -39.99
+    assert abs(results[0].growth_gb - (-39.99 / 100.0 * 13)) < 0.01
+    assert results[0].current_capacity_gb == 13.0
+
+
 def test_top_growing_filesystems_skips_single_sample_groups(db_session):
     host = Host(hostname="only-one-sample")
     db_session.add(host)

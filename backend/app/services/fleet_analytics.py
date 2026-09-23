@@ -83,12 +83,23 @@ def top_growing_filesystems(db: Session, days: int = 7, limit: int = 10) -> list
         if len(series) < 2:
             continue  # need at least two samples in the window to measure growth
         earliest, latest = series[0], series[-1]
+        growth_pct_points = latest.used_pct - earliest.used_pct
+        # growth_gb is derived from growth_pct_points * the LATEST (most
+        # trusted) capacity, not from (latest.used_bytes - earliest.used_bytes).
+        # capacity_bytes is itself derived per-sample from usedPct+avail
+        # (capacity = avail / (1 - usedPct/100)), which blows up if a single
+        # noisy usedPct reading near 100% slipped into the window -- that one
+        # bad row would otherwise desync growth_gb from growth_pct_points
+        # (e.g. "+17.9%" next to "+160GB" on a 13GB disk). Tying growth_gb to
+        # the same delta as growth_pct_points keeps the two numbers always
+        # consistent with each other, regardless of upstream metric noise.
+        growth_gb = growth_pct_points / 100.0 * latest.capacity_bytes / GB
         results.append(
             FilesystemGrowth(
                 hostname=hostnames.get(host_id, f"host-{host_id}"),
                 mount_point=mount_point,
-                growth_pct_points=round(latest.used_pct - earliest.used_pct, 2),
-                growth_gb=round((latest.used_bytes - earliest.used_bytes) / GB, 2),
+                growth_pct_points=round(growth_pct_points, 2),
+                growth_gb=round(growth_gb, 2),
                 current_used_pct=round(latest.used_pct, 2),
                 current_used_gb=round(latest.used_bytes / GB, 2),
                 current_capacity_gb=round(latest.capacity_bytes / GB, 2),
