@@ -53,9 +53,110 @@ def test_query_disk_usage_parses_and_merges_both_metrics():
     assert first.entity_id == "HOST-123"
     assert first.mount_point == "/var"
     assert first.used_pct == 80.0
-    # available=20GB at 80% used -> capacity=100GB, used=80GB
-    assert first.capacity_bytes == 100 * 1024 ** 3
-    assert first.used_bytes == 80 * 1024 ** 3
+
+
+def test_query_disk_usage_keeps_disks_separate_when_mountpoint_dimension_is_missing():
+    """Regression test for the "%200 used" data-corruption bug: on a live
+    Managed tenant, the metric response's dimensionMap had NO "mountPoint"/
+    "disk" key at all -- every filesystem fell back to the same hardcoded
+    "/" label and got merged together. dt.entity.disk (when present) must be
+    used to keep different filesystems apart regardless of mountPoint text."""
+    response = {
+        "result": [
+            {
+                "metricId": "builtin:host.disk.usedPct",
+                "data": [
+                    {
+                        "dimensionMap": {"dt.entity.host": "HOST-1", "dt.entity.disk": "DISK-ROOT"},
+                        "timestamps": [1700000000000],
+                        "values": [53.0],
+                    },
+                    {
+                        "dimensionMap": {"dt.entity.host": "HOST-1", "dt.entity.disk": "DISK-AUDIT"},
+                        "timestamps": [1700000000000],
+                        "values": [100.0],
+                    },
+                ],
+            },
+            {
+                "metricId": "builtin:host.disk.avail",
+                "data": [
+                    {
+                        "dimensionMap": {"dt.entity.host": "HOST-1", "dt.entity.disk": "DISK-ROOT"},
+                        "timestamps": [1700000000000],
+                        "values": [47 * 1024 ** 3],
+                    },
+                    {
+                        "dimensionMap": {"dt.entity.host": "HOST-1", "dt.entity.disk": "DISK-AUDIT"},
+                        "timestamps": [1700000000000],
+                        "values": [0],
+                    },
+                ],
+            },
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(transport=transport, base_url="https://fake.dynatrace.example")
+    client = DynatraceClient(client=http_client)
+
+    points = client.query_disk_usage(
+        usedpct_selector="builtin:host.disk.usedPct",
+        available_selector="builtin:host.disk.avail",
+    )
+
+    assert len(points) == 2
+    disk_entity_ids = {p.disk_entity_id for p in points}
+    assert disk_entity_ids == {"DISK-ROOT", "DISK-AUDIT"}  # never merged into one
+    by_disk = {p.disk_entity_id: p for p in points}
+    assert by_disk["DISK-ROOT"].used_pct == 53.0
+    assert by_disk["DISK-AUDIT"].used_pct == 100.0
+    # DISK-AUDIT is at exactly 100% -- capacity formula (avail/(1-usedPct/100))
+    # divides by zero there, so bytes stay unresolved rather than blowing up.
+    assert by_disk["DISK-AUDIT"].capacity_bytes is None
+
+
+def test_list_all_disks_paginates_and_resolves_host():
+    page1 = {
+        "entities": [
+            {
+                "entityId": "DISK-1",
+                "properties": {"mountPoint": "/var"},
+                "toRelationships": {"isDiskOf": [{"id": "HOST-1"}]},
+            },
+            # No host relationship -- must be skipped, nothing to attach it to.
+            {"entityId": "DISK-ORPHAN", "properties": {"mountPoint": "/orphan"}, "toRelationships": {}},
+        ],
+        "nextPageKey": "page2token",
+    }
+    page2 = {
+        "entities": [
+            {
+                "entityId": "DISK-2",
+                "properties": {"mountPoint": "/"},
+                "toRelationships": {"isDiskOf": [{"id": "HOST-1"}]},
+            },
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "nextPageKey" in request.url.params:
+            return httpx.Response(200, json=page2)
+        assert request.url.params["entitySelector"] == "type(DISK)"
+        return httpx.Response(200, json=page1)
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(transport=transport, base_url="https://fake.dynatrace.example")
+    client = DynatraceClient(client=http_client)
+
+    disks = client.list_all_disks()
+
+    assert [d.entity_id for d in disks] == ["DISK-1", "DISK-2"]
+    assert disks[0].mount_point == "/var"
+    assert disks[0].host_entity_id == "HOST-1"
 
 
 def test_dynatrace_verify_ssl_setting_propagates_to_client(monkeypatch):

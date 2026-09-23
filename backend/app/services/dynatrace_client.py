@@ -27,11 +27,20 @@ from app.core.config import Settings, get_settings
 @dataclass
 class DiskUsagePoint:
     entity_id: str
-    mount_point: str
+    mount_point: str | None
     timestamp_ms: int
     used_pct: float | None = None
     used_bytes: int | None = None
     capacity_bytes: int | None = None
+    # dt.entity.disk from the metric response's dimensionMap, when present.
+    # This is the reliable key for telling different filesystems on the same
+    # host apart -- `mount_point` text in the metric response's dimensions
+    # is tenant-dependent and was observed missing/unusable on a live
+    # Managed tenant (every disk fell back to "/", corrupting the data:
+    # different filesystems' usage got merged under one label). Callers
+    # (the collector) should resolve the real mount path from this id via
+    # `list_all_disks()`/Entities API rather than trusting `mount_point` here.
+    disk_entity_id: str | None = None
 
 
 @dataclass
@@ -152,6 +161,10 @@ class DynatraceClient:
         `isDiskOf` relationship, so DiskAdvisor knows every mount point that
         exists on the host -- not just the ones a metric query happens to
         return data for in the lookback window.
+
+        Prefer `list_all_disks()` for fleet-wide collection (one paginated
+        scan instead of one call per host); this one-host variant is for
+        ad-hoc/manual lookups.
         """
         resp = self._client.get(
             "/api/v2/entities",
@@ -166,6 +179,52 @@ class DynatraceClient:
         for entity in payload.get("entities", []):
             mount_point = (entity.get("properties") or {}).get("mountPoint") or entity.get("displayName", "/")
             disks.append(DiskEntity(entity_id=entity["entityId"], mount_point=mount_point, host_entity_id=host_entity_id))
+        return disks
+
+    def list_all_disks(self, page_size: int = 500) -> list[DiskEntity]:
+        """Fleet-wide disk entity scan: every DISK entity, its real
+        `properties.mountPoint`, and which host it belongs to
+        (`toRelationships.isDiskOf`) -- a handful of paginated calls instead
+        of one call per host (~6000 hosts).
+
+        This is the authoritative mount-point source used by the collector
+        to resolve `DiskUsagePoint.disk_entity_id` into a real path, because
+        the metric response's own `mountPoint` dimension text was observed
+        to be absent/unreliable on a live Managed tenant (every disk fell
+        back to the same label, corrupting per-filesystem usage figures).
+        Disks with no resolvable host relationship are skipped -- there is
+        nothing to attach them to.
+        """
+        disks: list[DiskEntity] = []
+        params: dict = {
+            "entitySelector": "type(DISK)",
+            "fields": "properties.mountPoint,toRelationships.isDiskOf",
+            "pageSize": page_size,
+        }
+        next_page_key: str | None = None
+
+        while True:
+            request_params = {"nextPageKey": next_page_key} if next_page_key else params
+            resp = self._client.get("/api/v2/entities", params=request_params)
+            resp.raise_for_status()
+            payload = resp.json()
+
+            for entity in payload.get("entities", []):
+                host_refs = (entity.get("toRelationships") or {}).get("isDiskOf") or []
+                if not host_refs:
+                    continue
+                host_entity_id = host_refs[0].get("id") if isinstance(host_refs[0], dict) else host_refs[0]
+                if not host_entity_id:
+                    continue
+                mount_point = (entity.get("properties") or {}).get("mountPoint") or entity.get("displayName", "/")
+                disks.append(
+                    DiskEntity(entity_id=entity["entityId"], mount_point=mount_point, host_entity_id=host_entity_id)
+                )
+
+            next_page_key = payload.get("nextPageKey")
+            if not next_page_key:
+                break
+
         return disks
 
     def query_disk_usage(
@@ -277,9 +336,18 @@ class DynatraceClient:
 
     @staticmethod
     def _parse_response(payload: dict, usedpct_sel: str, available_sel: str) -> list[DiskUsagePoint]:
-        # (entity_id, mount_point, timestamp_ms) -> value, one map per metric.
+        # (host_entity_id, disk_key, timestamp_ms) -> value, one map per metric.
+        # disk_key is dt.entity.disk when present (the reliable per-filesystem
+        # id) -- falling back to whatever mount-point-shaped dimension text
+        # exists only when the tenant truly doesn't dimension by disk entity.
+        # Never falls back to a hardcoded "/": that collapsed every disk on
+        # a host into one bucket on a tenant where dt.entity.disk was absent
+        # from the response, corrupting usage figures (e.g. an impossible
+        # "used 200%" from two different filesystems merged as one).
         usedpct_by_key: dict[tuple[str, str, int], float] = {}
         available_by_key: dict[tuple[str, str, int], float] = {}
+        mount_text_by_disk_key: dict[str, str] = {}
+        disk_entity_id_by_key: dict[str, str] = {}
 
         for result in payload.get("result", []):
             metric_id = result.get("metricId", "")
@@ -290,16 +358,22 @@ class DynatraceClient:
                 continue
             for series in result.get("data", []):
                 dims = series.get("dimensionMap", {}) or {}
-                entity_id = dims.get("dt.entity.host") or dims.get("dt.entity.disk") or "unknown"
-                mount_point = dims.get("mountPoint") or dims.get("disk") or "/"
+                entity_id = dims.get("dt.entity.host") or "unknown"
+                disk_entity_id = dims.get("dt.entity.disk")
+                mount_text = dims.get("mountPoint") or dims.get("disk")
+                disk_key = disk_entity_id or mount_text or "unknown"
+                if mount_text:
+                    mount_text_by_disk_key[disk_key] = mount_text
+                if disk_entity_id:
+                    disk_entity_id_by_key[disk_key] = disk_entity_id
                 for ts, val in zip(series.get("timestamps", []), series.get("values", [])):
                     if val is None:
                         continue
-                    target[(entity_id, mount_point, ts)] = val
+                    target[(entity_id, disk_key, ts)] = val
 
         points: list[DiskUsagePoint] = []
         for key in sorted(set(usedpct_by_key) | set(available_by_key)):
-            entity_id, mount_point, ts = key
+            entity_id, disk_key, ts = key
             used_pct = usedpct_by_key.get(key)
             available_bytes = available_by_key.get(key)
 
@@ -312,11 +386,12 @@ class DynatraceClient:
             points.append(
                 DiskUsagePoint(
                     entity_id=entity_id,
-                    mount_point=mount_point,
+                    mount_point=mount_text_by_disk_key.get(disk_key),
                     timestamp_ms=ts,
                     used_pct=used_pct,
                     used_bytes=used_bytes,
                     capacity_bytes=capacity_bytes,
+                    disk_entity_id=disk_entity_id_by_key.get(disk_key),
                 )
             )
         return points
