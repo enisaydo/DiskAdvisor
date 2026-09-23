@@ -147,23 +147,21 @@ systemctl enable --now diskadvisor-collector.timer
 
 # --- nginx: statik frontend + /api/ reverse proxy ---
 firewall-cmd --permanent --add-service=http --add-service=https && firewall-cmd --reload
+setsebool -P httpd_can_network_connect 1   # SELinux: nginx'in 8000'e (uvicorn) proxy_pass yapmasına izin ver
+cp backend/deploy/nginx/diskadvisor.conf /etc/nginx/conf.d/diskadvisor.conf
+# /etc/nginx/nginx.conf içindeki varsayılan `server {}` bloğunu kaldırın/yorumlayın (port 80 çakışması)
+# ssl_certificate/ssl_certificate_key yollarını gerçek sertifikanızla değiştirin
+nginx -t && systemctl enable --now nginx
 ```
 
-nginx örnek config (`/etc/nginx/conf.d/diskadvisor.conf`):
-```nginx
-server {
-    listen 80;
-    root /opt/diskadvisor/frontend/dist;
-    location /api/ { proxy_pass http://127.0.0.1:8000; }
-    location / { try_files $uri /index.html; }
-}
-```
+nginx config'i repoda: `backend/deploy/nginx/diskadvisor.conf` (TLS + SELinux notu + `proxy_set_header` başlıkları dahil, dokümantasyon amaçlı — bu oturumda gerçek bir nginx'e karşı test edilmedi).
 
 ## Stub / mock olan kısımlar (önemli)
 
 - **Dynatrace bağlantısı**: `app/services/dynatrace_client.py` gerçek bir Entities API v2 + Metrics API v2 istemcisidir (RHEL host keşfi + disk kullanım metrikleri) ama bu oturumda **canlı bir Dynatrace tenant'ına karşı çalıştırılmadı**; testlerde mock HTTP transport kullanılır. `list_rhel_hosts` host'ları `osType(LINUX)` ile sunucu tarafında, `osVersion` içinde "Red Hat" geçenleri istemci tarafında filtreler (Dynatrace'in distro bazlı bir entitySelector'ü yok).
 - **AAP Controller audit**: `app/services/ssh_audit.py` gerçek bir Controller REST istemcisidir (launch + poll + artifacts) ama gerçek bir AAP Controller/RHEL host olmadan uçtan uca test edilemez; unit testlerde `launch_fn` ve mock HTTP transport kullanılır. `backend/deploy/ansible/audit_disk.yml` gerçek fleet'e karşı bu oturumda çalıştırılmadı — job template olarak Controller'a elle yüklenmesi gerekir.
 - **Frontend**: gerçek backend'e bağlanacak şekilde yazıldı; backend çalışmıyorsa sayfalar otomatik olarak mock veriyle render olur.
+- **nginx config**: `backend/deploy/nginx/diskadvisor.conf` dokümantasyon amaçlıdır, gerçek bir nginx/SELinux'a karşı bu oturumda test edilmedi — `ssl_certificate` yolları placeholder, gerçek sertifikayla değiştirilmeli.
 
 ## Doğrulama durumu
 
