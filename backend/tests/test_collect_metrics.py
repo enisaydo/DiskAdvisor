@@ -18,6 +18,40 @@ def test_upsert_rhel_hosts_creates_and_updates(db_session):
     assert db_session.query(Host).count() == 1
 
 
+def test_upsert_rhel_hosts_reprovisioned_host_updates_entity_id_without_crashing(db_session):
+    """Regression test for a production crash: a host re-provisioned in
+    Dynatrace keeps its hostname but gets a NEW entity_id. Looking up only
+    by the (now stale) old entity_id used to insert a second row with the
+    same hostname, raising IntegrityError and taking down the entire
+    collector run before any disk_metrics got written."""
+    upsert_rhel_hosts(
+        db_session, [RhelHost(entity_id="HOST-OLD", hostname="gbocptest4-bank-dev-test-4")]
+    )
+    assert db_session.query(Host).count() == 1
+
+    # Same hostname, different entity_id -- must update in place, not insert.
+    hosts_by_entity_id = upsert_rhel_hosts(
+        db_session, [RhelHost(entity_id="HOST-NEW", hostname="gbocptest4-bank-dev-test-4")]
+    )
+
+    assert db_session.query(Host).count() == 1
+    assert hosts_by_entity_id["HOST-NEW"].hostname == "gbocptest4-bank-dev-test-4"
+    assert hosts_by_entity_id["HOST-NEW"].dt_entity_id == "HOST-NEW"
+
+
+def test_upsert_rhel_hosts_rename_conflict_is_skipped_not_crashed(db_session):
+    """Edge case: entity_id's hostname changed to one that already belongs
+    to a DIFFERENT row (e.g. two hosts swapped names, or a stale duplicate
+    entity). Must log and skip the rename rather than raise."""
+    upsert_rhel_hosts(db_session, [RhelHost(entity_id="HOST-A", hostname="app01")])
+    upsert_rhel_hosts(db_session, [RhelHost(entity_id="HOST-B", hostname="app02")])
+
+    hosts_by_entity_id = upsert_rhel_hosts(db_session, [RhelHost(entity_id="HOST-A", hostname="app02")])
+
+    assert db_session.query(Host).count() == 2
+    assert hosts_by_entity_id["HOST-A"].hostname == "app01"  # rename skipped, kept old name
+
+
 def test_store_points_writes_only_known_hosts(db_session):
     hosts_by_entity_id = upsert_rhel_hosts(db_session, [RhelHost(entity_id="HOST-1", hostname="app01")])
 

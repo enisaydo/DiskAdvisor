@@ -2,8 +2,10 @@
 
 Three-step pull from Dynatrace, every run:
   1. Discover every RHEL host entity (Entities API v2) and upsert it into
-     `hosts` (by dt_entity_id) -- this is the fleet inventory, kept in sync
-     as hosts are added/decommissioned in Dynatrace.
+     `hosts` (by hostname, the column with the actual unique constraint --
+     dt_entity_id is updated in place if Dynatrace re-provisioned the host
+     under a new entity ID) -- this is the fleet inventory, kept in sync as
+     hosts are added/decommissioned/re-provisioned in Dynatrace.
   2. Discover every disk entity fleet-wide (Entities API v2, `list_all_disks`)
      to build a disk_entity_id -> real mount path map. This is the
      authoritative source for mount points: the Metrics API response's own
@@ -42,19 +44,68 @@ logger = logging.getLogger("diskadvisor.collector")
 
 def upsert_rhel_hosts(db: Session, rhel_hosts: list[RhelHost]) -> dict[str, Host]:
     """Inserts/updates `hosts` rows for the given Dynatrace RHEL host
-    entities, keyed by `dt_entity_id`. Returns a dt_entity_id -> Host map
-    so the caller can attach disk_metrics rows without a second query.
+    entities. Returns a dt_entity_id -> Host map so the caller can attach
+    disk_metrics rows without a second query.
+
+    Two Dynatrace-side events both have to be handled without violating the
+    UNIQUE constraint on `hosts.hostname` (dt_entity_id has no such
+    constraint):
+
+      - A host is RENAMED in Dynatrace: same entity_id, new hostname.
+      - A host is RE-PROVISIONED (OS reinstall, monitoring re-registration):
+        same hostname, NEW entity_id -- the old entity may linger in
+        Dynatrace's inventory for a while as a stale/decommissioned entry.
+
+    Looking up only by dt_entity_id (the old behavior) mishandles the second
+    case: the old entity_id lookup finds nothing, so it tries to INSERT a
+    second row with a hostname that already exists, raising
+    `IntegrityError: duplicate key value violates unique constraint
+    "hosts_hostname_key"` -- which crashed the *entire* collector run before
+    a single disk_metrics row was written (observed in production: one
+    re-provisioned host took down an otherwise-successful 1800+ host run).
+
+    So: look up by dt_entity_id first (handles rename-in-place); if that
+    misses, look up by hostname (handles re-provisioning, updating
+    dt_entity_id in place instead of inserting a duplicate).
+
+    `db.flush()` after each insert (not just one `db.commit()` at the end)
+    so a same-run duplicate is caught via these lookups on the very next
+    iteration too, instead of relying on IntegrityError as control flow.
     """
     by_entity_id: dict[str, Host] = {}
     for rhel_host in rhel_hosts:
         host = db.execute(
             select(Host).where(Host.dt_entity_id == rhel_host.entity_id)
         ).scalar_one_or_none()
-        if host is None:
-            host = Host(dt_entity_id=rhel_host.entity_id, hostname=rhel_host.hostname)
-            db.add(host)
-        elif host.hostname != rhel_host.hostname:
-            host.hostname = rhel_host.hostname
+
+        if host is not None:
+            if host.hostname != rhel_host.hostname:
+                conflict = db.execute(
+                    select(Host).where(Host.hostname == rhel_host.hostname)
+                ).scalar_one_or_none()
+                if conflict is not None and conflict.id != host.id:
+                    logger.warning(
+                        "Host entity_id=%s adı '%s' -> '%s' olarak değişmiş ama "
+                        "'%s' zaten başka bir host'a ait, yeniden adlandırma atlanıyor.",
+                        rhel_host.entity_id, host.hostname, rhel_host.hostname, rhel_host.hostname,
+                    )
+                else:
+                    host.hostname = rhel_host.hostname
+        else:
+            host = db.execute(
+                select(Host).where(Host.hostname == rhel_host.hostname)
+            ).scalar_one_or_none()
+            if host is not None:
+                logger.info(
+                    "Host '%s' Dynatrace entity_id'si değişti: %s -> %s (yeniden provision edilmiş olabilir)",
+                    rhel_host.hostname, host.dt_entity_id, rhel_host.entity_id,
+                )
+                host.dt_entity_id = rhel_host.entity_id
+            else:
+                host = Host(dt_entity_id=rhel_host.entity_id, hostname=rhel_host.hostname)
+                db.add(host)
+                db.flush()
+
         by_entity_id[rhel_host.entity_id] = host
     db.commit()
     for host in by_entity_id.values():
