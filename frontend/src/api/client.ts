@@ -59,6 +59,15 @@ export interface FilesystemUsageOut {
   collected_at: string;
 }
 
+export interface DailyTrendPointOut {
+  date: string;
+  used_pct: number;
+  used_gb: number;
+  capacity_gb: number;
+  growth_pct_points_vs_prev_day: number | null;
+  growth_gb_vs_prev_day: number | null;
+}
+
 export interface CorrelationPointOut {
   timestamp_ms: number;
   value: number | null;
@@ -100,6 +109,10 @@ export const api = {
     apiFetch<FilesystemUsageOut[]>(`/hosts/high-usage?threshold_pct=${thresholdPct}`),
   getHostCorrelation: (hostname: string, days = 7) =>
     apiFetch<CorrelationSeriesOut[]>(`/hosts/${hostname}/correlation?days=${days}`),
+  getDailyTrend: (hostname: string, mountPoint: string, days = 14) =>
+    apiFetch<DailyTrendPointOut[]>(
+      `/hosts/${hostname}/daily-trend?mount_point=${encodeURIComponent(mountPoint)}&days=${days}`
+    ),
   evaluate: (body: { ticket_id: string; hostname: string; mount_point: string; requested_gb: number; requester?: string }) =>
     apiFetch<DecisionOut>("/advisor/evaluate", { method: "POST", body: JSON.stringify(body) }),
 };

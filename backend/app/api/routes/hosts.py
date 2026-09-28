@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import CorrelationPointOut, CorrelationSeriesOut, DiskMetricOut, FilesystemGrowthOut, FilesystemUsageOut, HostOut
+from app.api.schemas import CorrelationPointOut, CorrelationSeriesOut, DailyTrendPointOut, DiskMetricOut, FilesystemGrowthOut, FilesystemUsageOut, HostOut
 from app.core.config import get_settings
 from app.db.models import DiskMetric, Host
 from app.db.session import get_db
-from app.services import fleet_analytics
+from app.services import fleet_analytics, metrics_query
 from app.services.dynatrace_client import CORRELATION_METRIC_LABELS, DynatraceClient, get_dynatrace_client
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
@@ -58,6 +58,20 @@ def get_host_metrics(hostname: str, mount_point: str | None = None, db: Session 
         stmt = stmt.where(DiskMetric.mount_point == mount_point)
     stmt = stmt.order_by(DiskMetric.collected_at.asc())
     return db.execute(stmt).scalars().all()
+
+
+@router.get("/{hostname}/daily-trend", response_model=list[DailyTrendPointOut])
+def get_host_daily_trend(hostname: str, mount_point: str, days: int = 14, db: Session = Depends(get_db)):
+    """Day-by-day history for one host/mount, one snapshot per calendar day
+    with its change from the previous day -- "her yeni gün çekilen veri bir
+    önceki datalarla karşılaştırılıp büyüme trendi oluşturulacak" for a
+    single filesystem someone is drilling into (see Host Metrikleri UI),
+    as opposed to the fleet-wide `/hosts/top-growth` ranking.
+    """
+    host = db.execute(select(Host).where(Host.hostname == hostname)).scalar_one_or_none()
+    if host is None:
+        raise HTTPException(status_code=404, detail="Host bulunamadı")
+    return metrics_query.get_daily_trend(db, host.id, mount_point, days=days)
 
 
 @router.get("/{hostname}/correlation", response_model=list[CorrelationSeriesOut])

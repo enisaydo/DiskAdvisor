@@ -79,6 +79,49 @@ def test_top_growing_filesystems_ignores_noisy_earliest_capacity(db_session):
     assert results[0].current_capacity_gb == 13.0
 
 
+def _add_metric_at(db, host, mount_point, used_pct, collected_at, capacity_gb=100):
+    capacity_bytes = capacity_gb * GB
+    db.add(
+        DiskMetric(
+            host_id=host.id,
+            mount_point=mount_point,
+            capacity_bytes=capacity_bytes,
+            used_bytes=int(capacity_bytes * used_pct / 100.0),
+            used_pct=used_pct,
+            collected_at=collected_at,
+        )
+    )
+    db.flush()
+
+
+def test_top_growing_filesystems_compares_days_not_raw_hourly_samples(db_session):
+    """Multiple hourly samples on the same calendar day must collapse to one
+    (the last) before computing growth -- comparing day-to-day, not the
+    first/last raw hourly reading, which could be a noisy edge sample."""
+    host = Host(hostname="hourly-noise-host")
+    db_session.add(host)
+    db_session.commit()
+    db_session.refresh(host)
+
+    today = dt.datetime.now(dt.timezone.utc)
+    six_days_ago = today - dt.timedelta(days=6)
+
+    # Day 1 (6 days ago): noisy early-morning reading of 20%, real end-of-day
+    # value is 40%. Growth must be measured from the end-of-day 40%, not 20%.
+    _add_metric_at(db_session, host, "/data", used_pct=20.0, collected_at=six_days_ago.replace(hour=1))
+    _add_metric_at(db_session, host, "/data", used_pct=40.0, collected_at=six_days_ago.replace(hour=23))
+
+    # Today: two samples, last one (used_pct=70) is the end-of-day anchor.
+    _add_metric_at(db_session, host, "/data", used_pct=65.0, collected_at=today - dt.timedelta(hours=2))
+    _add_metric_at(db_session, host, "/data", used_pct=70.0, collected_at=today)
+
+    results = top_growing_filesystems(db_session, days=7)
+
+    assert len(results) == 1
+    # 70 - 40 = 30 points, NOT 70 - 20 = 50.
+    assert results[0].growth_pct_points == 30.0
+
+
 def test_top_growing_filesystems_skips_single_sample_groups(db_session):
     host = Host(hostname="only-one-sample")
     db_session.add(host)

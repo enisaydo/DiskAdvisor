@@ -80,6 +80,17 @@ class FilesystemUsageOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DailyTrendPointOut(BaseModel):
+    date: dt.date
+    used_pct: float
+    used_gb: float
+    capacity_gb: float
+    growth_pct_points_vs_prev_day: float | None
+    growth_gb_vs_prev_day: float | None
+
+    model_config = {"from_attributes": True}
+
+
 class CorrelationPointOut(BaseModel):
     timestamp_ms: int
     value: float | None

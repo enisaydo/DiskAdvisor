@@ -1,5 +1,5 @@
 // Local mock data used to render pages without a running backend (demo/dev).
-import type { CorrelationSeriesOut, DiskMetricOut, FilesystemGrowthOut, FilesystemUsageOut, HostOut, RequestOut } from "./client";
+import type { CorrelationSeriesOut, DailyTrendPointOut, DiskMetricOut, FilesystemGrowthOut, FilesystemUsageOut, HostOut, RequestOut } from "./client";
 
 export const mockRequests: RequestOut[] = [
   {
@@ -87,6 +87,31 @@ export const mockHighUsage: FilesystemUsageOut[] = [
   { hostname: "app01.prod.example.com", mount_point: "/var/log", used_pct: 88.1, used_gb: 44, capacity_gb: 50, collected_at: "2026-09-22T08:00:00Z" },
   { hostname: "app02.prod.example.com", mount_point: "/tmp", used_pct: 93.8, used_gb: 9.4, capacity_gb: 10, collected_at: "2026-09-22T08:00:00Z" },
 ];
+
+export const mockFullDisks: FilesystemUsageOut[] = [
+  { hostname: "gbbkmat02.gtdmz.com.tr", mount_point: "/var/log/audit", used_pct: 100, used_gb: 2, capacity_gb: 2, collected_at: "2026-09-28T08:00:00Z" },
+  { hostname: "gbocptest4-bank-dev-test-4", mount_point: "/opt/agents", used_pct: 100, used_gb: 20, capacity_gb: 20, collected_at: "2026-09-28T08:00:00Z" },
+];
+
+export function mockDailyTrendFor(_hostname: string, _mountPoint: string): DailyTrendPointOut[] {
+  const start = Date.UTC(2026, 8, 15);
+  const day = 24 * 60 * 60 * 1000;
+  const capacity = 100;
+  let prevPct: number | null = null;
+  return Array.from({ length: 14 }).map((_, i) => {
+    const usedPct = Math.min(97, 35 + i * 4.2);
+    const growthPct = prevPct == null ? null : Math.round((usedPct - prevPct) * 100) / 100;
+    prevPct = usedPct;
+    return {
+      date: new Date(start + i * day).toISOString().slice(0, 10),
+      used_pct: Math.round(usedPct * 10) / 10,
+      used_gb: Math.round(((usedPct / 100) * capacity) * 10) / 10,
+      capacity_gb: capacity,
+      growth_pct_points_vs_prev_day: growthPct,
+      growth_gb_vs_prev_day: growthPct == null ? null : Math.round(((growthPct / 100) * capacity) * 100) / 100,
+    };
+  });
+}
 
 export function mockCorrelationFor(_hostname: string): CorrelationSeriesOut[] {
   const start = Date.UTC(2026, 8, 15, 0, 0, 0);

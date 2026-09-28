@@ -55,9 +55,30 @@ def _hostnames_by_id(db: Session) -> dict[int, str]:
     return {h.id: h.hostname for h in db.execute(select(Host)).scalars()}
 
 
+def daily_snapshots(series: list) -> list:
+    """Collapses a (possibly hourly) series into one snapshot per calendar
+    day (UTC) -- the last sample seen that day. Comparing day-to-day
+    end-of-day values instead of raw hourly samples is what "her yeni gün
+    çekilen veri bir önceki datalarla karşılaştırılıp büyüme trendi
+    oluşturulacak" asks for, and it's also more stable: comparing two raw
+    hourly samples at the edges of a window can catch a single noisy
+    reading, whereas the last sample of a day is a steadier anchor.
+    `series` must already be sorted ascending by collected_at.
+    """
+    by_date: dict[dt.date, object] = {}
+    for row in series:
+        d = row.collected_at.date()
+        by_date[d] = row  # ascending order -> last write per date wins
+    return [by_date[d] for d in sorted(by_date)]
+
+
 def top_growing_filesystems(db: Session, days: int = 7, limit: int = 10) -> list[FilesystemGrowth]:
     """Top N filesystems by used_pct increase over the last `days` days,
-    across the whole fleet (not scoped to any one request)."""
+    across the whole fleet (not scoped to any one request). Growth is
+    measured between the first and last day that actually has data in the
+    window (day-level snapshots, see `_daily_snapshots`), not between raw
+    hourly samples.
+    """
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
     stmt = (
         select(
@@ -80,9 +101,10 @@ def top_growing_filesystems(db: Session, days: int = 7, limit: int = 10) -> list
     hostnames = _hostnames_by_id(db)
     results: list[FilesystemGrowth] = []
     for (host_id, mount_point), series in series_by_group.items():
-        if len(series) < 2:
-            continue  # need at least two samples in the window to measure growth
-        earliest, latest = series[0], series[-1]
+        daily = daily_snapshots(series)
+        if len(daily) < 2:
+            continue  # need at least two distinct days in the window to measure growth
+        earliest, latest = daily[0], daily[-1]
         growth_pct_points = latest.used_pct - earliest.used_pct
         # growth_gb is derived from growth_pct_points * the LATEST (most
         # trusted) capacity, not from (latest.used_bytes - earliest.used_bytes).

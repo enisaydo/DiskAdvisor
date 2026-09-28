@@ -153,6 +153,20 @@ def test_list_hosts_empty_then_populated(client):
     assert any(h["hostname"] == "host06.example.com" for h in resp.json())
 
 
+def test_host_daily_trend_requires_mount_point(client, db_session):
+    host = Host(hostname="host09.example.com")
+    db_session.add(host)
+    db_session.commit()
+
+    resp = client.get("/api/v1/hosts/host09.example.com/daily-trend")
+    assert resp.status_code == 422  # mount_point is a required query param
+
+
+def test_host_daily_trend_unknown_host_returns_404(client):
+    resp = client.get("/api/v1/hosts/does-not-exist/daily-trend?mount_point=/")
+    assert resp.status_code == 404
+
+
 def test_host_correlation_without_dt_entity_id_returns_400(client, db_session):
     host = Host(hostname="host07.example.com")
     db_session.add(host)

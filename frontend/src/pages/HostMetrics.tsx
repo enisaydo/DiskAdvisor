@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, DiskMetricOut, HostOut } from "../api/client";
-import { mockHosts, mockMetricsFor } from "../api/mockData";
+import { api, DailyTrendPointOut, DiskMetricOut, HostOut } from "../api/client";
+import { mockDailyTrendFor, mockHosts, mockMetricsFor } from "../api/mockData";
 import LineChart from "../components/LineChart";
 
 export default function HostMetrics() {
@@ -10,6 +10,7 @@ export default function HostMetrics() {
   const [selected, setSelected] = useState<string>("");
   const [metrics, setMetrics] = useState<DiskMetricOut[]>([]);
   const [selectedMount, setSelectedMount] = useState<string>("");
+  const [dailyTrend, setDailyTrend] = useState<DailyTrendPointOut[]>([]);
 
   useEffect(() => {
     api
@@ -74,6 +75,14 @@ export default function HostMetrics() {
     () => metrics.filter((m) => m.mount_point === selectedMount),
     [metrics, selectedMount]
   );
+
+  useEffect(() => {
+    if (!selected || !selectedMount) return;
+    api
+      .getDailyTrend(selected, selectedMount, 14)
+      .then(setDailyTrend)
+      .catch(() => setDailyTrend(mockDailyTrendFor(selected, selectedMount)));
+  }, [selected, selectedMount]);
 
   function selectHost(hostname: string) {
     setSelected(hostname);
@@ -151,6 +160,48 @@ export default function HostMetrics() {
             Bu host için CPU/bellek/network korelasyon analizine git →
           </Link>
         )}
+      </div>
+
+      <div className="card">
+        <h3>Günlük karşılaştırma (son 14 gün) — {selectedMount || "-"}</h3>
+        <p className="page-hint">Her yeni gün, bir önceki günle karşılaştırılır (o günün son ölçümü esas alınır).</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Tarih</th>
+              <th>Kullanım %</th>
+              <th>Kullanılan / Kapasite (GB)</th>
+              <th>Bir önceki güne göre</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dailyTrend.map((d) => (
+              <tr key={d.date}>
+                <td>{new Date(d.date).toLocaleDateString("tr-TR")}</td>
+                <td>{d.used_pct.toFixed(1)}%</td>
+                <td>
+                  {d.used_gb.toFixed(1)} / {d.capacity_gb.toFixed(0)}
+                </td>
+                <td>
+                  {d.growth_pct_points_vs_prev_day == null ? (
+                    "-"
+                  ) : (
+                    <span style={{ color: d.growth_pct_points_vs_prev_day > 0 ? "#991b1b" : "#166534" }}>
+                      {d.growth_pct_points_vs_prev_day > 0 ? "+" : ""}
+                      {d.growth_pct_points_vs_prev_day.toFixed(1)}% ({d.growth_gb_vs_prev_day! > 0 ? "+" : ""}
+                      {d.growth_gb_vs_prev_day!.toFixed(1)} GB)
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {dailyTrend.length === 0 && (
+              <tr>
+                <td colSpan={4}>Bu file system için henüz günlük veri yok.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

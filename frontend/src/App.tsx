@@ -4,6 +4,7 @@ import Requests from "./pages/Requests";
 import RequestDetail from "./pages/RequestDetail";
 import HostMetrics from "./pages/HostMetrics";
 import Analysis from "./pages/Analysis";
+import Critical from "./pages/Critical";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <NavLink to="/requests">Talepler</NavLink>
           <NavLink to="/hosts">Host Metrikleri</NavLink>
           <NavLink to="/analysis">Analiz</NavLink>
+          <NavLink to="/critical">Kritik (%100)</NavLink>
         </nav>
       </aside>
       <main className="content">
@@ -24,6 +26,7 @@ export default function App() {
           <Route path="/requests/:id" element={<RequestDetail />} />
           <Route path="/hosts" element={<HostMetrics />} />
           <Route path="/analysis" element={<Analysis />} />
+          <Route path="/critical" element={<Critical />} />
         </Routes>
       </main>
     </div>
